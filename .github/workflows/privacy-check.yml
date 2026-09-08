@@ -1,0 +1,26 @@
+name: Privacy verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privacy:
+    name: Privacy scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify scanner behavior
+        run: python3 -B -m unittest discover -s tools/privacy -p 'test_*.py'
+      - name: Inspect complete tracked content and commit metadata
+        run: python3 -B tools/privacy/check.py --metadata --history
