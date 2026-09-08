@@ -1,0 +1,152 @@
+name: Homebrew tap verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Verifier unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Test rejection and release-provenance boundaries
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+
+  contract:
+    name: Formula release contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      state: ${{ steps.verify.outputs.state }}
+      digest: ${{ steps.verify.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+      - name: Verify the candidate without executing Ruby
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REVISION: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            test "$GITHUB_REF" = refs/heads/main
+            BASE_REVISION=$(git rev-parse HEAD^)
+          fi
+          state=$(python3 tools/verify_formula.py --base-revision "$BASE_REVISION" --candidate-revision "$GITHUB_SHA")
+          case "$state" in bootstrap|verified) ;; *) exit 1 ;; esac
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          if [ "$state" = verified ]; then
+            digest=$(sha256sum Formula/dotnetjq.rb | cut -d ' ' -f 1)
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Formula state: $state"
+
+  install:
+    name: Homebrew (${{ matrix.rid }})
+    needs: [unit, contract]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-24.04
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+          - rid: osx-x64
+            os: macos-15-intel
+          - rid: osx-arm64
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_ANALYTICS: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      FORMULA_STATE: ${{ needs.contract.outputs.state }}
+      FORMULA_DIGEST: ${{ needs.contract.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Bind this checkout to the authenticated formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ "$FORMULA_STATE" = verified ]; then
+            test "$(shasum -a 256 Formula/dotnetjq.rb | cut -d ' ' -f 1)" = "$FORMULA_DIGEST"
+          else
+            test "$FORMULA_STATE" = bootstrap
+            test ! -e Formula/dotnetjq.rb
+            test ! -L Formula
+          fi
+      # This action checks out the exact GITHUB_SHA into Homebrew's tap path.
+      - name: Set up stable Homebrew and the exact tap revision
+        uses: Homebrew/actions/setup-homebrew@f8d4222eb633e65c2a0157383cf80861fc7fae7f
+        with:
+          stable: true
+          brew-gh-api-token: ''
+      - name: Verify tap discovery and checked-out revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "$(brew --repository gtg-open/dotnetjq)" rev-parse HEAD)" = "$GITHUB_SHA"
+          if [ "$FORMULA_STATE" = verified ]; then
+            test "$(shasum -a 256 Formula/dotnetjq.rb | cut -d ' ' -f 1)" = "$FORMULA_DIGEST"
+          fi
+          brew tap-info gtg-open/dotnetjq
+      - name: Read, install, and test the verified release
+        if: needs.contract.outputs.state == 'verified'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew readall gtg-open/dotnetjq
+          brew install --formula gtg-open/dotnetjq/dotnetjq
+          brew test gtg-open/dotnetjq/dotnetjq
+          version=$(sed -n 's/^  version "\([0-9]*\.[0-9]*\.[0-9]*\)"$/\1/p' Formula/dotnetjq.rb)
+          actual=$("$(brew --prefix gtg-open/dotnetjq/dotnetjq)/bin/dotnetjq" --version)
+          test "$actual" = "dotnetjq-$version (jq-1.8.2 compatible)"
+      - name: Explain the pre-release bootstrap state
+        if: needs.contract.outputs.state == 'bootstrap'
+        run: echo 'The tap loads correctly. Installation awaits the first published stable release; no package installation was tested.'
+
+  gate:
+    name: Homebrew tap gate
+    if: always()
+    needs: [unit, contract, install]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every contract and platform job to succeed
+        env:
+          UNIT_RESULT: ${{ needs.unit.result }}
+          CONTRACT_RESULT: ${{ needs.contract.result }}
+          INSTALL_RESULT: ${{ needs.install.result }}
+        run: |
+          test "$UNIT_RESULT" = success
+          test "$CONTRACT_RESULT" = success
+          test "$INSTALL_RESULT" = success
