@@ -129,6 +129,18 @@ class PrivacyTests(unittest.TestCase):
         self.git("commit", "-qm", "Add portable source and attribution")
         self.assertEqual(self.scan("--metadata", "--history").returncode, 0)
 
+    def test_homebrew_publisher_app_merge_identity_is_approved(self):
+        self.write("Formula/dotnetjq.rb", "class Dotnetjq < Formula\nend\n")
+        self.git("add", ".")
+        self.env.update({
+            "GIT_AUTHOR_NAME": "gtg-open-dotnetjq-homebrew[bot]",
+            "GIT_AUTHOR_EMAIL": "326292824+gtg-open-dotnetjq-homebrew[bot]@users.noreply.github.com",
+            "GIT_COMMITTER_NAME": "GitHub",
+            "GIT_COMMITTER_EMAIL": "noreply@github.com",
+        })
+        self.git("commit", "-qm", "Merge verified formula update")
+        self.assertEqual(self.scan("--metadata", "--history").returncode, 0)
+
     def test_unapproved_commit_identity_and_sensitive_ancestor_are_rejected(self):
         self.write("notes.txt", SYNTHETIC_HOME)
         self.git("add", ".")

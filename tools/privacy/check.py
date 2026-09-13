@@ -38,6 +38,7 @@ APPROVED_IDENTITIES = frozenset({
     ("gtg-open-maintainer", "325667272+gtg-open-maintainer@users.noreply.github.com"),
     ("GitHub", "noreply@github.com"),
     ("github-actions[bot]", "41898282+github-actions[bot]@users.noreply.github.com"),
+    ("gtg-open-dotnetjq-homebrew[bot]", "326292824+gtg-open-dotnetjq-homebrew[bot]@users.noreply.github.com"),
     ("dependabot[bot]", "49699333+dependabot[bot]@users.noreply.github.com"),
 })
 MAX_MEMBER = 256 * 1024 * 1024
