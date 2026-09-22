@@ -106,7 +106,7 @@ jobs:
           fi
       # This action checks out the exact GITHUB_SHA into Homebrew's tap path.
       - name: Set up stable Homebrew and the exact tap revision
-        uses: Homebrew/actions/setup-homebrew@f8d4222eb633e65c2a0157383cf80861fc7fae7f
+        uses: Homebrew/actions/setup-homebrew@848c272c7bfe984a197bd4d16383f4c106ec61e6
         with:
           stable: true
           brew-gh-api-token: ''
